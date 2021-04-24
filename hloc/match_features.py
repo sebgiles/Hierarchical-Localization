@@ -38,11 +38,13 @@ confs = {
 
 
 @torch.no_grad()
-def main(conf, pairs, features, export_dir, exhaustive=False):
+def main(conf, pairs, features, export_dir, exhaustive=False, feature_path=None):
     logging.info('Matching local features with configuration:'
                  f'\n{pprint.pformat(conf)}')
 
-    feature_path = Path(export_dir, features+'.h5')
+    if feature_path is None:
+        feature_path = Path(export_dir, features+'.h5')
+        
     assert feature_path.exists(), feature_path
     feature_file = h5py.File(str(feature_path), 'r')
 
