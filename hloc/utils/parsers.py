@@ -46,7 +46,7 @@ def parse_generalized_queries(paths):
 
         logging.info(f'Importing {len(raw_data)} queries in {lfile.name}')
         for data in raw_data:
-            data = data.strip('\n').split(' ')
+            data = data.strip('\n ').split(' ')
             query = parse_generalized_query(data)
             results.append(query)
 
@@ -65,7 +65,7 @@ def parse_image_lists_with_intrinsics(paths):
 
         logging.info(f'Importing {len(raw_data)} queries in {lfile.name}')
         for data in raw_data:
-            data = data.strip('\n').split(' ')
+            data = data.strip("\n ").split(' ')
             results.append(parse_image_with_intrinsics(data))
 
     assert len(results) > 0
