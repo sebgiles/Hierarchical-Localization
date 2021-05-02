@@ -12,10 +12,21 @@ def parse_image_with_intrinsics(data):
     return (name, info, )    
 
 
+class SubQuery:
+    def __init__(self, name, info, extrinsics):
+        self.name = name
+        self.camera_model, self.width, self.height, self.params = info
+        self.extrinsics = extrinsics
+        self.mkpq = None
+        self.mp3d = None
+        self.num_matches = None
+        self.mkp_idxs = None 
+        self.mkp_to_3D_to_db = None 
+
 def parse_image_with_intrinsics_and_extrinsics(data):
     name, info = parse_image_with_intrinsics(data[:12])
     extrinsics = np.array(data[12:19], float)
-    return (name, info, extrinsics)   
+    return SubQuery(name, info, extrinsics)   
 
 # identity quaternion and null translation
 IDENTITY_EXTRINSICS = np.array([1,0,0,0,0,0,0], float)

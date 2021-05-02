@@ -45,53 +45,55 @@ def do_covisibility_clustering(frame_ids, all_images, points3D):
     return clusters
 
 
-def pose_from_cluster(qname, qinfo, db_ids, db_images, points3D,
+def pose_from_cluster(query: list[SubQuery], retrieval_ids, db_images, points3D,
                       feature_file, match_file, thresh):
-    kpq = feature_file[qname]['keypoints'].__array__()
-    kp_idx_to_3D = defaultdict(list)
-    kp_idx_to_3D_to_db = defaultdict(lambda: defaultdict(list))
-    num_matches = 0
+    for subquery in query:
+        qname = subquery.name
+        qinfo = subquery.info
+        kpq = feature_file[qname]['keypoints'].__array__()
+        kp_idx_to_3D = defaultdict(list)
+        kp_idx_to_3D_to_db = defaultdict(lambda: defaultdict(list))
+        num_matches = 0
 
-    for i, db_id in enumerate(db_ids):
-        db_name = db_images[db_id].name
-        points3D_ids = db_images[db_id].point3D_ids
+        for i, db_id in enumerate(db_ids):
+            db_name = db_images[db_id].name
+            points3D_ids = db_images[db_id].point3D_ids
 
-        pair = names_to_pair(qname, db_name)
-        matches = match_file[pair]['matches0'].__array__()
-        valid = np.where(matches > -1)[0]
-        valid = valid[points3D_ids[matches[valid]] != -1]
-        num_matches += len(valid)
+            pair = names_to_pair(qname, db_name)
+            matches = match_file[pair]['matches0'].__array__()
+            valid = np.where(matches > -1)[0]
+            valid = valid[points3D_ids[matches[valid]] != -1]
+            num_matches += len(valid)
 
-        for idx in valid:
-            id_3D = points3D_ids[matches[idx]]
-            kp_idx_to_3D_to_db[idx][id_3D].append(i)
-            # avoid duplicate observations
-            if id_3D not in kp_idx_to_3D[idx]:
-                kp_idx_to_3D[idx].append(id_3D)
+            for idx in valid:
+                id_3D = points3D_ids[matches[idx]]
+                kp_idx_to_3D_to_db[idx][id_3D].append(i)
+                # avoid duplicate observations
+                if id_3D not in kp_idx_to_3D[idx]:
+                    kp_idx_to_3D[idx].append(id_3D)
 
-    idxs = list(kp_idx_to_3D.keys())
-    mkp_idxs = [i for i in idxs for _ in kp_idx_to_3D[i]]
-    mkpq = kpq[mkp_idxs]
-    mkpq += 0.5  # COLMAP coordinates
+        idxs = list(kp_idx_to_3D.keys())
+        mkp_idxs = [i for i in idxs for _ in kp_idx_to_3D[i]]
+        mkpq = kpq[mkp_idxs]
+        mkpq += 0.5  # COLMAP coordinates
 
-    mp3d_ids = [j for i in idxs for j in kp_idx_to_3D[i]]
-    mp3d = [points3D[j].xyz for j in mp3d_ids]
-    mp3d = np.array(mp3d).reshape(-1, 3)
+        mp3d_ids = [j for i in idxs for j in kp_idx_to_3D[i]]
+        mp3d = [points3D[j].xyz for j in mp3d_ids]
+        mp3d = np.array(mp3d).reshape(-1, 3)
 
-    # mostly for logging and post-processing
-    mkp_to_3D_to_db = [(j, kp_idx_to_3D_to_db[i][j])
-                       for i in idxs for j in kp_idx_to_3D[i]]
+        # mostly for logging and post-processing
+        mkp_to_3D_to_db = [(j, kp_idx_to_3D_to_db[i][j])
+                           for i in idxs for j in kp_idx_to_3D[i]]
 
-    camera_model, width, height, params = qinfo
-    cfg = {
-        'model': camera_model,
-        'width': width,
-        'height': height,
-        'params': params,
-    }
-    ret = pycolmap.absolute_pose_estimation(mkpq, mp3d, cfg, thresh)
-    ret['cfg'] = cfg
-    return ret, mkpq, mp3d, mp3d_ids, num_matches, (mkp_idxs, mkp_to_3D_to_db)
+        subquery.mkpq = mkpq  # 2d
+        subquery.mp3d = mp3d  # 3d
+        subquery.num_matches = num_matches
+        subquery.mp3d_ids = mp3d_ids
+        subquery.mkp_idxs = mkp_idxs
+        subquery.mkp_to_3D_to_db = mkp_to_3D_to_db
+
+    #ret = pycolmap.absolute_pose_estimation(mkpq, mp3d, cfg, thresh)
+    return ret
 
 
 def main(reference_sfm, queries, retrieval, features, matches, results,
@@ -120,64 +122,38 @@ def main(reference_sfm, queries, retrieval, features, matches, results,
         'loc': {},
     }
     logging.info('Starting localization...')
-    for qname, qinfo, _ in tqdm(queries):
-        db_names = retrieval_dict[qname]
-        db_ids = []
-        for n in db_names:
-            if n not in db_name_to_id:
-                logging.warning(f'Image {n} was retrieved but not in database')
-                continue
-            db_ids.append(db_name_to_id[n])
 
-        if covisibility_clustering:
-            clusters = do_covisibility_clustering(db_ids, db_images, points3D)
-            best_inliers = 0
-            best_cluster = None
-            logs_clusters = []
-            for i, cluster_ids in enumerate(clusters):
-                ret, mkpq, mp3d, mp3d_ids, num_matches, _ = pose_from_cluster(
-                    qname, qinfo, cluster_ids, db_images, points3D,
-                    feature_file, match_file, thresh=ransac_thresh)
-                if ret['success'] and ret['num_inliers'] > best_inliers:
-                    best_cluster = i
-                    best_inliers = ret['num_inliers']
-                logs_clusters.append({
-                    'cluster_ids': cluster_ids,
-                    'PnP_ret': ret,
-                    'keypoints_query': mkpq,
-                    'points3D_xyz': mp3d,
-                    'points3D_ids': mp3d_ids,
-                    'num_matches': num_matches,
-                })
-            # logging.info(f'# inliers: {best_inliers}')
-            if best_cluster is not None:
-                ret = logs_clusters[best_cluster]['PnP_ret']
-                poses[qname] = (ret['qvec'], ret['tvec'])
-            logs['loc'][qname] = {
-                'db_ids': db_ids,
-                'best_cluster': best_cluster,
-                'log_clusters': logs_clusters,
-            }
+    for qname, qinfo, subqueries in tqdm(queries):
+        retrieval_names = {sq.name:retrieval_dict[sq.name] for sq in subqueries}
+        retrieval_ids = {}
+        for sq_name in retrieval_names:
+            sq_retrieval_ids = []
+            for name in retrieval_names[sq_name]:
+                if name not in db_name_to_id:
+                    logging.warning(f'Image {n} was retrieved but not in database')
+                    continue
+                sq_retrieval_ids.append(db_name_to_id[name])
+            retrieval_ids[sq_name] = sq_retrieval_ids
+
+        ret, num_matches, map_ = pose_from_cluster(
+            subqueries, retrieval_ids, db_images, points3D,
+            feature_file, match_file, thresh=ransac_thresh)
+        # logging.info(f'# inliers: {ret["num_inliers"]}')
+
+        if ret['success']:
+            poses[qname] = (ret['qvec'], ret['tvec'])
         else:
-            ret, mkpq, mp3d, mp3d_ids, num_matches, map_ = pose_from_cluster(
-                qname, qinfo, db_ids, db_images, points3D,
-                feature_file, match_file, thresh=ransac_thresh)
-            # logging.info(f'# inliers: {ret["num_inliers"]}')
-
-            if ret['success']:
-                poses[qname] = (ret['qvec'], ret['tvec'])
-            else:
-                closest = db_images[db_ids[0]]
-                poses[qname] = (closest.qvec, closest.tvec)
-            logs['loc'][qname] = {
-                'db': db_ids,
-                'PnP_ret': ret,
-                'keypoints_query': mkpq,
-                'points3D_xyz': mp3d,
-                'points3D_ids': mp3d_ids,
-                'num_matches': num_matches,
-                'keypoint_index_to_db': map_,
-            }
+            closest = retrieval_names[subqueries[0].name]
+            poses[qname] = (closest.qvec, closest.tvec)
+        logs['loc'][qname] = {
+            'db': retrieval_ids,
+            # 'PnP_ret': ret,
+            # 'keypoints_query': mkpq,
+            # 'points3D_xyz': mp3d,
+            # 'points3D_ids': mp3d_ids,
+            # 'num_matches': num_matches,
+            # 'keypoint_index_to_db': map_,
+        }
 
     logging.info(f'Localized {len(poses)} / {len(queries)} images.')
     logging.info(f'Writing poses to {results}...')
