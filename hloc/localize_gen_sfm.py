@@ -7,6 +7,7 @@ import h5py
 from tqdm import tqdm
 import pickle
 import pycolmap
+from scipy.spatial.transform import Rotation
 
 from .utils.read_write_model import read_model
 from .utils.parsers import (
@@ -47,6 +48,8 @@ def do_covisibility_clustering(frame_ids, all_images, points3D):
 
 def pose_from_cluster(query: list[SubQuery], retrieval_ids, db_images, points3D,
                       feature_file, match_file, thresh):
+    camera_dicts = []
+    rel_camera_poses = []
     for subquery in query:
         qname = subquery.name
         qinfo = subquery.info
@@ -85,14 +88,30 @@ def pose_from_cluster(query: list[SubQuery], retrieval_ids, db_images, points3D,
         mkp_to_3D_to_db = [(j, kp_idx_to_3D_to_db[i][j])
                            for i in idxs for j in kp_idx_to_3D[i]]
 
+        camera_model, width, height, params = qinfo
+        camera_dicts.append({
+            'model': camera_model,
+            'width': width,
+            'height': height,
+            'params': params,
+        })
         subquery.mkpq = mkpq  # 2d
         subquery.mp3d = mp3d  # 3d
-        subquery.num_matches = num_matches
+        subquery.num_matches = len(idxs)  #unique
         subquery.mp3d_ids = mp3d_ids
         subquery.mkp_idxs = mkp_idxs
         subquery.mkp_to_3D_to_db = mkp_to_3D_to_db
+        R = Rotation.from_quat(subquery.extrinsiscs[:4])
 
-    #ret = pycolmap.absolute_pose_estimation(mkpq, mp3d, cfg, thresh)
+        t = subquery.extrinsiscs[-3:]
+        rel_camera_pose.append(np.concatenate([R.as_matrix(), t])) 
+
+    mkpq = numpy.concatenate([sq.mkpq for sq in query])
+    mp3d = numpy.concatenate([sq.mp3d for sq in query])
+    cam_idxs = numpy.concatenate([cam_idx*np.ones(query[cam_idx].num_matches)
+            for cam_idx in range(len(query))])
+    ret = pycolmap.generalized_absolute_pose_estimation(mkpq, mp3d, cam_idxs,
+            rel_camera_poses, camera_dicts, max_error_px=thresh)
     return ret
 
 
@@ -154,7 +173,7 @@ def main(reference_sfm, queries, retrieval, features, matches, results,
             # 'num_matches': num_matches,
             # 'keypoint_index_to_db': map_,
         }
-
+    
     logging.info(f'Localized {len(poses)} / {len(queries)} images.')
     logging.info(f'Writing poses to {results}...')
     with open(results, 'w') as f:
