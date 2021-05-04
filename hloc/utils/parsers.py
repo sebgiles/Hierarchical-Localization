@@ -33,7 +33,7 @@ IDENTITY_EXTRINSICS = np.array([1,0,0,0,0,0,0], float)
 
 def parse_generalized_query(fields):
     name, info_0 = parse_image_with_intrinsics(fields[:12])
-    images = [(name, info_0, IDENTITY_EXTRINSICS,),]
+    images = [SubQuery(name, info_0, IDENTITY_EXTRINSICS),]
     done = 12
     while len(fields) > done:
         assert len(fields) >= done + 19

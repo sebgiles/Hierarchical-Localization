@@ -11,7 +11,7 @@ from scipy.spatial.transform import Rotation
 
 from .utils.read_write_model import read_model
 from .utils.parsers import (
-    parse_image_lists_with_intrinsics, parse_retrieval, names_to_pair, parse_generalized_queries)
+    SubQuery, parse_image_lists_with_intrinsics, parse_retrieval, names_to_pair, parse_generalized_queries)
 
 
 def do_covisibility_clustering(frame_ids, all_images, points3D):
@@ -46,18 +46,18 @@ def do_covisibility_clustering(frame_ids, all_images, points3D):
     return clusters
 
 
-def pose_from_cluster(query: list[SubQuery], retrieval_ids, db_images, points3D,
+def pose_from_cluster(query, retrieval_ids, db_images, points3D,
                       feature_file, match_file, thresh):
     camera_dicts = []
     rel_camera_poses = []
     for subquery in query:
         qname = subquery.name
-        qinfo = subquery.info
+        #qinfo = subquery.info
         kpq = feature_file[qname]['keypoints'].__array__()
         kp_idx_to_3D = defaultdict(list)
         kp_idx_to_3D_to_db = defaultdict(lambda: defaultdict(list))
         num_matches = 0
-
+        db_ids = retrieval_ids[qname]
         for i, db_id in enumerate(db_ids):
             db_name = db_images[db_id].name
             points3D_ids = db_images[db_id].point3D_ids
@@ -88,12 +88,12 @@ def pose_from_cluster(query: list[SubQuery], retrieval_ids, db_images, points3D,
         mkp_to_3D_to_db = [(j, kp_idx_to_3D_to_db[i][j])
                            for i in idxs for j in kp_idx_to_3D[i]]
 
-        camera_model, width, height, params = qinfo
+        #camera_model, width, height, params = qinfo
         camera_dicts.append({
-            'model': camera_model,
-            'width': width,
-            'height': height,
-            'params': params,
+            'model': subquery.camera_model,
+            'width': subquery.width,
+            'height': subquery.height,
+            'params': subquery.params,
         })
         subquery.mkpq = mkpq  # 2d
         subquery.mp3d = mp3d  # 3d
@@ -101,15 +101,19 @@ def pose_from_cluster(query: list[SubQuery], retrieval_ids, db_images, points3D,
         subquery.mp3d_ids = mp3d_ids
         subquery.mkp_idxs = mkp_idxs
         subquery.mkp_to_3D_to_db = mkp_to_3D_to_db
-        R = Rotation.from_quat(subquery.extrinsiscs[:4])
+        R = Rotation.from_quat(subquery.extrinsics[:4]).as_matrix()
 
-        t = subquery.extrinsiscs[-3:]
-        rel_camera_pose.append(np.concatenate([R.as_matrix(), t])) 
+        t = subquery.extrinsics[-3:]
+        rel_camera_poses.append(np.append(R,np.atleast_2d(t).transpose(),axis=1)) 
 
-    mkpq = numpy.concatenate([sq.mkpq for sq in query])
-    mp3d = numpy.concatenate([sq.mp3d for sq in query])
-    cam_idxs = numpy.concatenate([cam_idx*np.ones(query[cam_idx].num_matches)
+    mkpq = np.concatenate([sq.mkpq for sq in query])
+    mp3d = np.concatenate([sq.mp3d for sq in query])
+    cam_idxs = np.concatenate([cam_idx*np.ones(query[cam_idx].num_matches,dtype=int)
             for cam_idx in range(len(query))])
+    #for obj in [mkpq, mp3d, cam_idxs,
+    #        rel_camera_poses, camera_dicts]:
+    #    print(type(obj[0]))
+    print(camera_dicts)
     ret = pycolmap.generalized_absolute_pose_estimation(mkpq, mp3d, cam_idxs,
             rel_camera_poses, camera_dicts, max_error_px=thresh)
     return ret
@@ -129,7 +133,6 @@ def main(reference_sfm, queries, retrieval, features, matches, results,
     logging.info('Reading 3D model...')
     _, db_images, points3D = read_model(str(reference_sfm), '.bin')
     db_name_to_id = {image.name: i for i, image in db_images.items()}
-
     feature_file = h5py.File(features, 'r')
     match_file = h5py.File(matches, 'r')
 
@@ -141,7 +144,6 @@ def main(reference_sfm, queries, retrieval, features, matches, results,
         'loc': {},
     }
     logging.info('Starting localization...')
-
     for qname, qinfo, subqueries in tqdm(queries):
         retrieval_names = {sq.name:retrieval_dict[sq.name] for sq in subqueries}
         retrieval_ids = {}
