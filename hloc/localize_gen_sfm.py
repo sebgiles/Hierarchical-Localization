@@ -97,7 +97,7 @@ def pose_from_cluster(query, retrieval_ids, db_images, points3D,
         })
         subquery.mkpq = mkpq  # 2d
         subquery.mp3d = mp3d  # 3d
-        subquery.num_matches = len(idxs)  #unique
+        subquery.num_matches = len(mkpq)
         subquery.mp3d_ids = mp3d_ids
         subquery.mkp_idxs = mkp_idxs
         subquery.mkp_to_3D_to_db = mkp_to_3D_to_db
