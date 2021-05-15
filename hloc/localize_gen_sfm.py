@@ -110,10 +110,12 @@ def pose_from_cluster(query, retrieval_ids, db_images, points3D,
     mp3d = np.concatenate([sq.mp3d for sq in query])
     cam_idxs = np.concatenate([cam_idx*np.ones(query[cam_idx].num_matches,dtype=int)
             for cam_idx in range(len(query))])
-    #for obj in [mkpq, mp3d, cam_idxs,
-    #        rel_camera_poses, camera_dicts]:
-    #    print(type(obj[0]))
-    print(camera_dicts)
+
+    # Uncomment to save to file for COLMAP unit test
+    # np.savetxt("mkpq.csv", mkpq, delimiter=" ")
+    # np.savetxt("mp3d.csv", mp3d, delimiter=" ")
+    # np.savetxt("cam_idxs.csv", cam_idxs, delimiter=" ")
+
     ret = pycolmap.generalized_absolute_pose_estimation(mkpq, mp3d, cam_idxs,
             rel_camera_poses, camera_dicts, max_error_px=thresh)
     return ret
@@ -156,7 +158,7 @@ def main(reference_sfm, queries, retrieval, features, matches, results,
                 sq_retrieval_ids.append(db_name_to_id[name])
             retrieval_ids[sq_name] = sq_retrieval_ids
 
-        ret, num_matches, map_ = pose_from_cluster(
+        ret = pose_from_cluster(
             subqueries, retrieval_ids, db_images, points3D,
             feature_file, match_file, thresh=ransac_thresh)
         # logging.info(f'# inliers: {ret["num_inliers"]}')
