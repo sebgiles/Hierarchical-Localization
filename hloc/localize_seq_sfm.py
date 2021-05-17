@@ -12,7 +12,9 @@ from scipy.spatial.transform import Rotation
 from .utils.read_write_model import read_model
 from .utils.parsers import (
     SubQuery, parse_image_lists_with_intrinsics, parse_retrieval, names_to_pair, parse_generalized_queries)
+from .utils.query import *
 
+from typing import List
 
 def do_covisibility_clustering(frame_ids, all_images, points3D):
     clusters = []
@@ -110,31 +112,30 @@ def pose_from_cluster(query, retrieval_ids, db_images, points3D,
     mp3d = np.concatenate([sq.mp3d for sq in query])
     cam_idxs = np.concatenate([cam_idx*np.ones(query[cam_idx].num_matches,dtype=int)
             for cam_idx in range(len(query))])
+    
+    #for obj in [mkpq, mp3d, cam_idxs,
+    #        rel_camera_poses, camera_dicts]:
+    #    print(type(obj[0]))
+    print(cam_idxs)
 
-    # Uncomment to save to file for COLMAP unit test
-    # np.savetxt("mkpq.csv", mkpq, delimiter=" ")
-    # np.savetxt("mp3d.csv", mp3d, delimiter=" ")
-    # np.savetxt("cam_idxs.csv", cam_idxs, delimiter=" ")
+    np.savetxt("mkpq.csv", mkpq, delimiter=" ")
+    np.savetxt("mp3d.csv", mp3d, delimiter=" ")
+    np.savetxt("cam_idxs.csv", cam_idxs, delimiter=" ")
 
     ret = pycolmap.generalized_absolute_pose_estimation(mkpq, mp3d, cam_idxs,
             rel_camera_poses, camera_dicts, max_error_px=thresh)
     return ret
 
 
-def main(reference_sfm, queries, retrieval, features, matches, results,
-         ransac_thresh=12, covisibility_clustering=False):
+def main(queries: List[QueryFrameSequence], 
+        features: Path, 
+        matches: Path, 
+        results: Path,
+        ransac_thresh=12, covisibility_clustering=False):
 
-    assert reference_sfm.exists(), reference_sfm
-    assert retrieval.exists(), retrieval
     assert features.exists(), features
     assert matches.exists(), matches
 
-    queries = parse_generalized_queries(queries)
-    retrieval_dict = parse_retrieval(retrieval)
-
-    logging.info('Reading 3D model...')
-    _, db_images, points3D = read_model(str(reference_sfm), '.bin')
-    db_name_to_id = {image.name: i for i, image in db_images.items()}
     feature_file = h5py.File(features, 'r')
     match_file = h5py.File(matches, 'r')
 
@@ -142,21 +143,11 @@ def main(reference_sfm, queries, retrieval, features, matches, results,
     logs = {
         'features': features,
         'matches': matches,
-        'retrieval': retrieval,
         'loc': {},
     }
     logging.info('Starting localization...')
-    for qname, qinfo, subqueries in tqdm(queries):
-        retrieval_names = {sq.name:retrieval_dict[sq.name] for sq in subqueries}
-        retrieval_ids = {}
-        for sq_name in retrieval_names:
-            sq_retrieval_ids = []
-            for name in retrieval_names[sq_name]:
-                if name not in db_name_to_id:
-                    logging.warning(f'Image {n} was retrieved but not in database')
-                    continue
-                sq_retrieval_ids.append(db_name_to_id[name])
-            retrieval_ids[sq_name] = sq_retrieval_ids
+    for query in tqdm(queries):
+        qname, qinfo, subqueries
 
         ret = pose_from_cluster(
             subqueries, retrieval_ids, db_images, points3D,
@@ -187,23 +178,3 @@ def main(reference_sfm, queries, retrieval, features, matches, results,
             tvec = ' '.join(map(str, tvec))
             name = q.split('/')[-1]
             f.write(f'{name} {qvec} {tvec}\n')
-
-    logs_path = f'{results}_logs.pkl'
-    logging.info(f'Writing logs to {logs_path}...')
-    with open(logs_path, 'wb') as f:
-        pickle.dump(logs, f)
-    logging.info('Done!')
-
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--reference_sfm', type=Path, required=True)
-    parser.add_argument('--queries', type=Path, required=True)
-    parser.add_argument('--features', type=Path, required=True)
-    parser.add_argument('--matches', type=Path, required=True)
-    parser.add_argument('--retrieval', type=Path, required=True)
-    parser.add_argument('--results', type=Path, required=True)
-    parser.add_argument('--ransac_thresh', type=float, default=12.0)
-    parser.add_argument('--covisibility_clustering', action='store_true')
-    args = parser.parse_args()
-    main(**args.__dict__)
