@@ -29,7 +29,7 @@ def parse_image_with_intrinsics_and_extrinsics(data):
     return SubQuery(name, info, extrinsics)   
 
 # identity quaternion and null translation
-IDENTITY_EXTRINSICS = np.array([1,0,0,0,0,0,0], float)
+IDENTITY_EXTRINSICS = np.array([0,0,0,1,0,0,0], float)
 
 def parse_generalized_query(fields):
     name, info_0 = parse_image_with_intrinsics(fields[:12])
