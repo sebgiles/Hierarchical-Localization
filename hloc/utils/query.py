@@ -100,7 +100,9 @@ class QueryFrameSequence:
         )
         return text
 
-
+    def get_image_names(self, cam=0):
+        return (x.images[cam].filename for x in self.frames)
+        
 class QueryDatabase:
     def __init__(self, images_path: Path):
         image_names = None
