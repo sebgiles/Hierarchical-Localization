@@ -1,4 +1,4 @@
-from __future__ import annotations
+#from __future__ import annotations
 from os import X_OK
 from typing import List
 from pathlib import Path
@@ -41,13 +41,18 @@ class Transform:
 
     def normalize(self):
         return UnscaledTransform(t=self.t, q=self.R.as_quat())
+    
+    def distance_to(self, other):
+        t_err = np.linalg.norm(self.t - other.t)
+        R_err = (self.R*other.R.inv()).magnitude()
+        return t_err, np.rad2deg(R_err)
 
 class UnscaledTransform(Transform):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.t = self.t / np.linalg.norm(self.t)
 
-    def distance_to(self, other: UnscaledTransform):
+    def distance_to(self, other):
         t_err = np.arccos(np.clip(np.dot(self.t, other.t), -1.0, 1.0))
         R_err = (self.R*other.R.inv()).magnitude()
         return np.rad2deg(t_err), np.rad2deg(R_err)
