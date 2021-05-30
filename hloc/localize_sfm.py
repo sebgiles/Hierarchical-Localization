@@ -1,5 +1,6 @@
 import argparse
 import logging
+from hloc.utils.query import CAMERAS
 import numpy as np
 from pathlib import Path
 from collections import defaultdict
@@ -7,6 +8,8 @@ import h5py
 from tqdm import tqdm
 import pickle
 import pycolmap
+from scipy.spatial.transform import Rotation
+from .utils.pose import Transform
 
 from .utils.read_write_model import read_model
 from .utils.parsers import (
@@ -94,7 +97,7 @@ def pose_from_cluster(qname, qinfo, db_ids, db_images, points3D,
     return ret, mkpq, mp3d, mp3d_ids, num_matches, (mkp_idxs, mkp_to_3D_to_db)
 
 
-def main(reference_sfm, queries, retrieval, features, matches, results,
+def main(reference_sfm, queries, retrieval, features, matches, output_path,
          ransac_thresh=12, covisibility_clustering=False):
 
     assert reference_sfm.exists(), reference_sfm
@@ -102,7 +105,7 @@ def main(reference_sfm, queries, retrieval, features, matches, results,
     assert features.exists(), features
     assert matches.exists(), matches
 
-    queries = parse_image_lists_with_intrinsics(queries)
+    #queries = parse_image_lists_with_intrinsics(queries)
     retrieval_dict = parse_retrieval(retrieval)
 
     logging.info('Reading 3D model...')
@@ -112,6 +115,8 @@ def main(reference_sfm, queries, retrieval, features, matches, results,
     feature_file = h5py.File(features, 'r')
     match_file = h5py.File(matches, 'r')
 
+    output_file = h5py.File(str(output_path), 'a')
+
     poses = {}
     logs = {
         'features': features,
@@ -120,7 +125,12 @@ def main(reference_sfm, queries, retrieval, features, matches, results,
         'loc': {},
     }
     logging.info('Starting localization...')
-    for qname, qinfo in tqdm(queries):
+    for query in tqdm(queries):
+        qname = query.filename
+        if qname in output_file:
+            continue
+        cam_dict = CAMERAS[query.camera_id]
+        qinfo = (cam_dict[f] for f in ['model', 'width', 'height', 'params'])
         db_names = retrieval_dict[qname]
         db_ids = []
         for n in db_names:
@@ -166,6 +176,13 @@ def main(reference_sfm, queries, retrieval, features, matches, results,
 
             if ret['success']:
                 poses[qname] = (ret['qvec'], ret['tvec'])
+                R_CG = Rotation.from_quat(np.roll(ret['qvec'],-1))
+                C_G = -R_CG.inv().apply(ret['tvec'])
+                T_GC = Transform(t=C_G, q=R_CG.inv().as_quat())
+                grp = output_file.create_group(qname)
+                grp.create_dataset('q', data=T_GC.R.as_quat())
+                grp.create_dataset('t', data=T_GC.t)
+
             else:
                 closest = db_images[db_ids[0]]
                 poses[qname] = (closest.qvec, closest.tvec)
@@ -178,21 +195,21 @@ def main(reference_sfm, queries, retrieval, features, matches, results,
                 'num_matches': num_matches,
                 'keypoint_index_to_db': map_,
             }
-
+    output_file.close()
     logging.info(f'Localized {len(poses)} / {len(queries)} images.')
-    logging.info(f'Writing poses to {results}...')
-    with open(results, 'w') as f:
-        for q in poses:
-            qvec, tvec = poses[q]
-            qvec = ' '.join(map(str, qvec))
-            tvec = ' '.join(map(str, tvec))
-            name = q.split('/')[-1]
-            f.write(f'{name} {qvec} {tvec}\n')
+    # logging.info(f'Writing poses to {results}...')
+    # with open(results, 'w') as f:
+    #     for q in poses:
+    #         qvec, tvec = poses[q]
+    #         qvec = ' '.join(map(str, qvec))
+    #         tvec = ' '.join(map(str, tvec))
+    #         name = q.split('/')[-1]
+    #         f.write(f'{name} {qvec} {tvec}\n')
 
-    logs_path = f'{results}_logs.pkl'
-    logging.info(f'Writing logs to {logs_path}...')
-    with open(logs_path, 'wb') as f:
-        pickle.dump(logs, f)
+    # logs_path = f'{results}_logs.pkl'
+    # logging.info(f'Writing logs to {logs_path}...')
+    # with open(logs_path, 'wb') as f:
+    #     pickle.dump(logs, f)
     logging.info('Done!')
 
 
