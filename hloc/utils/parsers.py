@@ -83,7 +83,7 @@ def parse_image_lists_with_intrinsics(paths):
     return results
 
 
-def parse_retrieval(path):
+def parse_retrieval(path: Path):
     retrieval = defaultdict(list)
     with open(path, 'r') as f:
         for p in f.read().rstrip('\n').split('\n'):
