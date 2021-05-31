@@ -66,7 +66,7 @@ class PoseDatabase:
                 for file in path.glob('*.txt'):
                     lines += file.open().readlines()
             else:
-                 lines.append(path.open().readlines())
+                 lines += path.open().readlines()
         self.poses = {'ground': Transform(t=[0,0,0], q=[0,0,0,1])}
         for line in lines:
             fields = line.strip().split()
