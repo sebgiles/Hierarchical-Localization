@@ -147,7 +147,6 @@ def main(reference_sfm, queries, retrieval, features, matches, results,
     }
     logging.info('Starting localization...')
     for qname, qinfo, subqueries in tqdm(queries):
-        print(qname)
         retrieval_names = {sq.name:retrieval_dict[sq.name] for sq in subqueries}
         retrieval_ids = {}
         for sq_name in retrieval_names:
