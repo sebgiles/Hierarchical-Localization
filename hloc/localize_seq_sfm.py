@@ -78,8 +78,10 @@ def main(   reference_sfm,
             queries: List[QueryFrameSequence],
             results: Path,
             ransac_thresh=12,
+            rel_ransac_thresh=12,
             covisibility_clustering=False,
-            overwrite=False):
+            overwrite=False,
+            rel_weight=1000):
 
     assert reference_sfm.exists(), reference_sfm
     assert retrieval.exists(), retrieval
@@ -102,8 +104,7 @@ def main(   reference_sfm,
     logging.info('Starting localization...')
     for query in tqdm(queries):
         cam_id = query.cams[0]
-        qimages = [q.images[cam_id] for q in query.frames]
-        qnames = [img.filename for img in qimages]
+        qnames = query.get_image_names(cam=cam_id)
         qname = qnames[0]
         camera = CAMERAS[cam_id]
 
@@ -151,7 +152,9 @@ def main(   reference_sfm,
             rel1_points2D_0,
             rel0_points2D_1,
             camera,
-            max_error_px = 12.0
+            max_error_px = ransac_thresh,
+            rel_max_error_px = rel_ransac_thresh,
+            rel_weight = rel_weight
         )
 
         if ret['success']:
