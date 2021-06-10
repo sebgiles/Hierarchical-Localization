@@ -17,12 +17,10 @@ from .utils.query import *
 
 from typing import List
 
-CAM_ID = 0
-OVERWRITE = True
 
 def get_points_3d(feature_file: h5py.File, match_file: h5py.File,
                         db_images, db_points, retr_ids, img_name):
-    
+
     kpq = feature_file[img_name]['keypoints'].__array__()
     kp_idx_to_3D = defaultdict(list)
     kp_idx_to_3D_to_db = defaultdict(lambda: defaultdict(list))
@@ -56,7 +54,7 @@ def get_points_3d(feature_file: h5py.File, match_file: h5py.File,
     return mp3d, mkpq
 
 
-def get_points_2d(features: h5py.File, matches: h5py.File, 
+def get_points_2d(features: h5py.File, matches: h5py.File,
                     img0_name: str, img1_name: str, n_best: int=10000):
     pair = matches[names_to_pair(img0_name, img1_name)]
     matches01 = pair['matches0'].__array__()
@@ -66,7 +64,7 @@ def get_points_2d(features: h5py.File, matches: h5py.File,
     features0 = features[img0_name]['keypoints'].__array__()[ranking]
     features1 = features[img1_name]['keypoints'].__array__()
     mkpq0 = features0[matched][:n_best]
-    mkpq1 = features1[matches01[matched]][:n_best]    
+    mkpq1 = features1[matches01[matched]][:n_best]
     mkpq0 += 0.5  # to COLMAP coordinates
     mkpq1 += 0.5  # to COLMAP coordinates
     return mkpq0, mkpq1
@@ -80,7 +78,10 @@ def main(   reference_sfm,
             queries: List[QueryFrameSequence],
             results: Path,
             ransac_thresh=12,
-            covisibility_clustering=False):
+            rel_ransac_thresh=12,
+            covisibility_clustering=False,
+            overwrite=False,
+            rel_weight=1000):
 
     assert reference_sfm.exists(), reference_sfm
     assert retrieval.exists(), retrieval
@@ -102,43 +103,42 @@ def main(   reference_sfm,
 
     logging.info('Starting localization...')
     for query in tqdm(queries):
-        qimages = [q.images[0] for q in query.frames]
-        qnames = [img.filename for img in qimages]
-
+        cam_id = query.cams[0]
+        qnames = query.get_image_names(cam=cam_id)
         qname = qnames[0]
+        camera = CAMERAS[cam_id]
 
         if qname in output_file:
-            if OVERWRITE:
+            if overwrite:
                 del output_file[qname]
             else:
                 continue
 
-
         retrieval_names = {nm: retrieval_dict[nm] for nm in qnames}
-        retrieval_ids = {nm: 
+        retrieval_ids = {nm:
             [db_name_to_id[retr_name] for retr_name in retrieval_dict[nm]]
                 for nm in qnames}
 
         rel1_points2D_0, rel0_points2D_1 = get_points_2d(
-            features=feature_file, 
+            features=feature_file,
             matches=rel_match_file,
-            img0_name=qnames[0], 
+            img0_name=qnames[0],
             img1_name=qnames[1]
         )
 
         points3D_0, map_points2D_0 = get_points_3d(
-            feature_file=feature_file, 
+            feature_file=feature_file,
             match_file=abs_match_file,
-            db_images=db_images, 
+            db_images=db_images,
             db_points=points3D,
             retr_ids=retrieval_ids[qnames[0]],
             img_name=qnames[0],
         )
 
         points3D_1, map_points2D_1 = get_points_3d(
-            feature_file=feature_file, 
+            feature_file=feature_file,
             match_file=abs_match_file,
-            db_images=db_images, 
+            db_images=db_images,
             db_points=points3D,
             retr_ids=retrieval_ids[qnames[1]],
             img_name=qnames[1],
@@ -151,8 +151,10 @@ def main(   reference_sfm,
             map_points2D_1,
             rel1_points2D_0,
             rel0_points2D_1,
-            CAMERAS[CAM_ID],
-            max_error_px = 12.0
+            camera,
+            max_error_px = ransac_thresh,
+            rel_max_error_px = rel_ransac_thresh,
+            rel_weight = rel_weight
         )
 
         if ret['success']:

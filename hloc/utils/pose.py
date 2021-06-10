@@ -66,7 +66,7 @@ class PoseDatabase:
                 for file in path.glob('*.txt'):
                     lines += file.open().readlines()
             else:
-                 lines.append(path.open().readlines())
+                 lines += path.open().readlines()
         self.poses = {'ground': Transform(t=[0,0,0], q=[0,0,0,1])}
         for line in lines:
             fields = line.strip().split()
@@ -85,3 +85,28 @@ class PoseDatabase:
         p0 = [self.poses[x] for x in k0]
         p1 = [self.poses[x] for x in k1]
         return [x.inv() * y for x,y in zip(p0,p1)]
+
+    def closest_in(self, database, output_file:Path=None):
+        sfm_k = list(database.poses.keys())[1:]
+        sfm_t = np.stack([pose.t for pose in list(database.poses.values())[1:]])
+        sfm_R = np.stack([pose.R for pose in list(database.poses.values())[1:]])
+        retrieval = {}
+        for key in self.poses:
+            if key == 'ground': continue
+            t = self.poses[key].t
+            R = self.poses[key].R
+            dist = np.linalg.norm(sfm_t - t, axis=(1,))
+            top = np.argsort(dist)[:30]
+            rot_err = np.array([rot_err.magnitude() for rot_err in sfm_R[top] * R.inv()])
+            top = top[rot_err < 1.0][:10]
+            retrieval[key] = [sfm_k[t] for t in top]
+        if output_file:
+            pairs = []
+            for key in retrieval:
+                for found in retrieval[key]:
+                    pairs.append(f"{key} {found}\n")
+            with open(output_file, 'w') as file:
+                file.writelines(pairs)
+            return pairs
+        else:
+            return retrieval

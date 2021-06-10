@@ -12,7 +12,7 @@ CAMERAS = [
         'model': 'OPENCV',
         'width': 1024,
         'height': 768,
-        'params': np.array([ 868.993378, 866.063001, 525.942323, 420.042529, 
+        'params': np.array([ 868.993378, 866.063001, 525.942323, 420.042529,
                             -0.399431, 0.188924, 0.000153, 0.000571 ]),
         'extrinsics': np.array([
             [1., 0., 0., 0.],
@@ -58,34 +58,37 @@ class QueryImage:
 
 
 class QueryFrame:
-    def __init__(self, images: List[QueryImage]):
-        images.sort(key=lambda x: x.camera_id)
-        check_unique([x.camera_id for x in images])
-        self.images = images
-        self.time_us = images[0].time_us
-        self.time_ms = images[0].time_ms
-        self.date = images[0].date
-        # self.time_ms = np.mean([x.time_ms for x in images])
-        # self.time_us = np.mean([x.time_us for x in images])
+    def __init__(self, image_list: List[QueryImage]):
+        image_list.sort(key=lambda x: x.camera_id)
+        self.cams = [x.camera_id for x in image_list]
+        check_unique(self.cams)
+        self.images = {img.camera_id: img for img in image_list}
+        self.time_us = image_list[0].time_us
+        self.time_ms = image_list[0].time_ms
+        self.date = image_list[0].date
+        # self.time_ms = np.mean([x.time_ms for x in image_list])
+        # self.time_us = np.mean([x.time_us for x in image_list])
         self.time_delta_us = (
-            max([x.time_us for x in images]) - min([x.time_us for x in images]))
-        self.frame_number = images[0].frame_number
-        self.size = len(images)
+            max([x.time_us for x in image_list]) - min([x.time_us for x in image_list]))
+        self.frame_number = image_list[0].frame_number
+        self.size = len(image_list)
 
     def __repr__(self):
         date_string = self.date.strftime("%Y-%m-%d")
         out_string = f"Frame {date_string} #{self.frame_number:05} {{\n"
-        return out_string + "\n".join([f"\t{x}" for x in self.images]) + "\n}"
+        return out_string + "\n".join([f"\t{x}" for x in self.images.values()]) + "\n}"
 
 
 class QueryFrameSequence:
     def __init__(self, frames: List[QueryFrame]):
         assert len(frames) > 1
+        assert all([frames[1:]])
         frames.sort(key=lambda x: x.time_ms)
         self.date = frames[0].date
         self.start_ms = frames[0].time_ms
         self.end_ms = frames[-1].time_ms
         self.size = len(frames)
+        self.cams = frames[0].cams
         self.duration_ms = self.end_ms - self.start_ms
         self.period_avg_ms = self.duration_ms / (self.size - 1)
         #self.period_std_ms = np.std(np.diff([x.time_ms for x in frames]))
@@ -96,13 +99,13 @@ class QueryFrameSequence:
             f'{self.date}\t' +
             f'duration: {(self.duration_ms/1e3):.1f}s\t' +
             f'{self.size:} frames\t' +
-            f'period: {self.period_avg_ms:.1f} ms' 
+            f'period: {self.period_avg_ms:.1f} ms'
         )
         return text
 
     def get_image_names(self, cam=0):
-        return (x.images[cam].filename for x in self.frames)
-        
+        return [x.images[cam].filename for x in self.frames]
+
 class QueryDatabase:
     def __init__(self, images_path: Path):
         image_names = None
@@ -116,11 +119,10 @@ class QueryDatabase:
         self.sequences = self.__to_sequences(self.frames)
 
 
-    # NOTE: only returns pairs for now
     # n is how many queries you want to generate
     # step_size is number of time steps (~100ms) between frames
-    def get_sequence_queries(self, query_count=1, step_size=1, step_count=2,
-        seed=None):
+    def get_sequence_queries(self, query_count=1, step_size=1, step_count=2, 
+        required_cams=[], seed=None):
         random.seed(seed)
         step_span = step_count*step_size
         valid_sequences = []
@@ -128,26 +130,22 @@ class QueryDatabase:
             if seq.size > step_span:
                 valid_sequences.append(seq)
         out = []
-        for i in range(query_count):
+        while len(out) < query_count:
             # NOTE: distribution is not uniform
             seq_number = random.randint(0, len(valid_sequences)-1)
             seq = valid_sequences[seq_number]
             frame_number = random.randint(0, seq.size-step_span-1)
             frames = seq.frames[frame_number:frame_number+step_span:step_size]
-            out.append(QueryFrameSequence(frames))
-        # Remove duplicates (should be replaces tp satisfy query_count)
-        out.sort(key=lambda x: x.start_ms)
-        i = 1
-        while i < len(out):
-            if out[i].start_ms == out[i-1].start_ms:
-                del out[i]
-            else:
-                i += 1 
+            qfs = QueryFrameSequence(frames)
+            duplicate = any([qfs.start_ms == x.start_ms for x in out])
+            has_all_cams = all([cam in qfs.cams for cam in required_cams])
+            if has_all_cams and not duplicate:
+                out.append(qfs)
 
         return SequenceQuerySet(out)
 
     @classmethod
-    def __to_frames(cls, images: List[QueryImage], 
+    def __to_frames(cls, images: List[QueryImage],
                     max_delta_us=200) -> List[QueryFrame]:
         frames = []
         # Assume images in the same frame are adjacent after sorting by time
@@ -168,14 +166,18 @@ class QueryDatabase:
     # this is measured between average timestamps of the images in each frame.
     # We discard short sequences and those with unstable frame rate.
     @classmethod
-    def __to_sequences(cls, frames: QueryFrame, max_delta_ms=200, 
+    def __to_sequences(cls, frames: QueryFrame, max_delta_ms=200,
                         min_seq_duration_ms=1000) -> List[QueryFrameSequence]:
         sequences = []
         frames.sort(key=lambda x: x.time_us)
         sequence = [frames[0]]
         for frame in frames[1:]:
-            # if frame.time_us - sequence[-1].time_us > max_delta_ms*1000:
-            if frame.frame_number != sequence[-1].frame_number + 1:
+            interrupt = (
+                frame.time_us - sequence[-1].time_us > max_delta_ms*1000
+                or frame.frame_number != sequence[-1].frame_number + 1
+                or frame.cams != sequence[-1].cams
+            )
+            if interrupt:
                 if len(sequence) > 1:
                     qfs = QueryFrameSequence(sequence)
                     if qfs.duration_ms >= min_seq_duration_ms:
@@ -204,16 +206,16 @@ class SequenceQuerySet:
     def __init__(self, sequence_queries: List[QueryFrameSequence]):
         self.sequences = sequence_queries
 
-    def write_pairs_for_matching(self, output_file: Path, overwrite=False):
+    def write_pairs_for_matching(self, output_file: Path, overwrite=False, cam_id=0):
         assert overwrite or not output_file.exists()
         lines = []
         for seq in self.sequences:
             for f0, f1 in zip(seq.frames[:-1], seq.frames[1:]):
                 # NOTE: we only take one image from the rigs
                 lines.append(
-                    f"{f0.images[0].filename} {f1.images[0].filename}\n")
+                    f"{f0.images[cam_id].filename} {f1.images[cam_id].filename}\n")
                 lines.append(
-                    f"{f1.images[0].filename} {f0.images[0].filename}\n")
+                    f"{f1.images[cam_id].filename} {f0.images[cam_id].filename}\n")
 
         with open(output_file, 'w') as f:
             f.writelines(lines)

@@ -98,7 +98,7 @@ def pose_from_cluster(qname, qinfo, db_ids, db_images, points3D,
 
 
 def main(reference_sfm, queries, retrieval, features, matches, output_path,
-         ransac_thresh=12, covisibility_clustering=False):
+         ransac_thresh=12, covisibility_clustering=False, overwrite=False):
 
     assert reference_sfm.exists(), reference_sfm
     assert retrieval.exists(), retrieval
@@ -128,7 +128,11 @@ def main(reference_sfm, queries, retrieval, features, matches, output_path,
     for query in tqdm(queries):
         qname = query.filename
         if qname in output_file:
-            continue
+            if overwrite:
+                del output_file[qname]
+            else:
+                continue
+            
         cam_dict = CAMERAS[query.camera_id]
         qinfo = (cam_dict[f] for f in ['model', 'width', 'height', 'params'])
         db_names = retrieval_dict[qname]
