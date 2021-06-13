@@ -9,7 +9,7 @@ import pickle
 import pycolmap
 from scipy.spatial.transform import Rotation
 
-from .utils.read_write_model import read_model
+from .utils.read_write_model import read_model, qvec2rotmat, rotmat2qvec
 from .utils.parsers import (
     SubQuery, parse_image_lists_with_intrinsics, parse_retrieval, names_to_pair, parse_generalized_queries)
 
@@ -164,7 +164,24 @@ def main(reference_sfm, queries, retrieval, features, matches, results,
         # logging.info(f'# inliers: {ret["num_inliers"]}')
 
         if ret['success']:
-            poses[qname] = (ret['qvec'], ret['tvec'])
+            for i in range(len(subqueries)):
+                # messy way to do this, need to find a better way
+
+                q_10 = ret['rig_qvecs'][i]
+                t_10 = ret['rig_tvecs'][i]
+                r_10 = qvec2rotmat(q_10)
+                r_01 = np.transpose(r_10)
+                t_01 = -np.matmul(r_01, t_10)
+
+                r0 = qvec2rotmat(ret['qvec'])
+                t0 = ret['tvec']
+                t1 = t0 - t_01
+
+                r_1w = np.matmul(r_10, r0)
+                t_1w = np.matmul(r_10, t1)
+                q_1w = rotmat2qvec(r_1w)
+                poses[subqueries[i].name] = (q_1w, t_1w)
+
         else:
             closest = retrieval_names[subqueries[0].name]
             poses[qname] = (closest.qvec, closest.tvec)
