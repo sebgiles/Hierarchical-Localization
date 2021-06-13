@@ -47,7 +47,7 @@ def do_covisibility_clustering(frame_ids, all_images, points3D):
 
 
 def pose_from_cluster(query, retrieval_ids, db_images, points3D,
-                      feature_file, match_file, thresh):
+                      feature_file, match_file, thresh, refinement_options):
     camera_dicts = []
     rel_camera_poses = []
     for subquery in query:
@@ -117,17 +117,23 @@ def pose_from_cluster(query, retrieval_ids, db_images, points3D,
     # np.savetxt("cam_idxs.csv", cam_idxs, delimiter=" ")
 
     ret = pycolmap.generalized_absolute_pose_estimation(mkpq, mp3d, cam_idxs,
-            rel_camera_poses, camera_dicts, max_error_px=thresh)
+            rel_camera_poses, camera_dicts, refinement_options, max_error_px=thresh)
     return ret
 
 
 def main(reference_sfm, queries, retrieval, features, matches, results,
-         ransac_thresh=12, covisibility_clustering=False):
+         ransac_thresh=12, covisibility_clustering=False, refine_t=False, refine_scale=False,
+         refine_q=False, rig_cost_weight=1):
 
     assert reference_sfm.exists(), reference_sfm
     assert retrieval.exists(), retrieval
     assert features.exists(), features
     assert matches.exists(), matches
+
+    refinement_options = {"refine_t": refine_t, 
+    "refine_scale": refine_scale, 
+    "refine_q": refine_q, 
+    "rig_cost_weight": rig_cost_weight}
 
     queries = parse_generalized_queries(queries)
     retrieval_dict = parse_retrieval(retrieval)
@@ -160,7 +166,7 @@ def main(reference_sfm, queries, retrieval, features, matches, results,
 
         ret = pose_from_cluster(
             subqueries, retrieval_ids, db_images, points3D,
-            feature_file, match_file, thresh=ransac_thresh)
+            feature_file, match_file, ransac_thresh, refinement_options)
         # logging.info(f'# inliers: {ret["num_inliers"]}')
 
         if ret['success']:
