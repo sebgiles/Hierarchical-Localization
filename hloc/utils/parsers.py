@@ -65,6 +65,40 @@ def parse_generalized_queries(paths):
     return results
 
 
+def parse_sequence_query(fields):
+    name, info_0 = parse_image_with_intrinsics(fields[:12])
+    images = [name]
+    done = 12
+    while len(fields) > done:
+        assert len(fields) >= done + 12
+        image = parse_image_with_intrinsics(fields[done:done+12])
+        images.append(image[0])
+        done += 12
+        
+    # first image gives the query name
+    # info_0 is kept for compatibility with the single view pipeline
+    return (name, info_0, images)
+
+
+def parse_sequence_queries(paths):
+    results = []
+    files = list(Path(paths.parent).glob(paths.name))
+    assert len(files) > 0
+
+    for lfile in files:
+        with open(lfile, 'r') as f:
+            raw_data = f.readlines()
+
+        logging.info(f'Importing {len(raw_data)} queries in {lfile.name}')
+        for data in raw_data:
+            data = data.strip('\n ').split(' ')
+            query = parse_sequence_query(data)
+            results.append(query)
+
+    assert len(results) > 0
+    return results
+
+
 def parse_image_lists_with_intrinsics(paths):
     results = []
     files = list(Path(paths.parent).glob(paths.name))

@@ -12,7 +12,7 @@ from .utils.pose import Transform
 
 from .utils.read_write_model import read_model
 from .utils.parsers import (
-    SubQuery, parse_image_lists_with_intrinsics, parse_retrieval, names_to_pair, parse_generalized_queries)
+    SubQuery, parse_image_lists_with_intrinsics, parse_retrieval, names_to_pair, parse_sequence_queries)
 from .utils.query import *
 
 from typing import List
@@ -75,12 +75,10 @@ def main(   reference_sfm,
             matches_absolute: Path,
             matches_relative: Path,
             retrieval: Path,
-            queries: List[QueryFrameSequence],
+            queries: Path,
             results: Path,
             ransac_thresh=12,
-            rel_ransac_thresh=12,
-            covisibility_clustering=False,
-            overwrite=False,
+            rel_ransac_thresh=0.5,
             rel_weight=1000):
 
     assert reference_sfm.exists(), reference_sfm
@@ -90,6 +88,7 @@ def main(   reference_sfm,
     assert matches_relative.exists(), matches_relative
 
     retrieval_dict = parse_retrieval(retrieval)
+    query_list = parse_sequence_queries(queries)
 
     logging.info('Reading 3D model...')
     _, db_images, points3D = read_model(str(reference_sfm), '.bin')
@@ -98,21 +97,19 @@ def main(   reference_sfm,
     abs_match_file = h5py.File(matches_absolute, 'r')
     rel_match_file = h5py.File(matches_relative, 'r')
 
+    failed = 0
     poses = {}
-    output_file = h5py.File(str(results), 'a')
 
     logging.info('Starting localization...')
-    for query in tqdm(queries):
-        cam_id = query.cams[0]
-        qnames = query.get_image_names(cam=cam_id)
-        qname = qnames[0]
-        camera = CAMERAS[cam_id]
+    for qname, qinfo, qnames in tqdm(query_list):
+        assert qname == qnames[0]
+        camera = {
+            'model': qinfo[0],
+            'width': qinfo[1],
+            'height': qinfo[2],
+            'params': qinfo[3],
+        }
 
-        if qname in output_file:
-            if overwrite:
-                del output_file[qname]
-            else:
-                continue
 
         retrieval_names = {nm: retrieval_dict[nm] for nm in qnames}
         retrieval_ids = {nm:
@@ -159,12 +156,18 @@ def main(   reference_sfm,
 
         if ret['success']:
             poses[qname] = (ret['qvec_0'], ret['tvec_0'])
-            R_CG = Rotation.from_quat(np.roll(ret['qvec_0'],-1))
-            C_G = -R_CG.inv().apply(ret['tvec_0'])
-            T_GC = Transform(t=C_G, q=R_CG.inv().as_quat())
-            grp = output_file.create_group(qname)
-            grp.create_dataset('q', data=T_GC.R.as_quat())
-            grp.create_dataset('t', data=T_GC.t)
+        else:
+            failed += 1
+            closest = retrieval_names[qname]
+            poses[qname] = (closest.qvec, closest.tvec)
 
-    output_file.close()
-    logging.info(f'Localized {len(poses)} / {len(queries)} images.')
+
+    logging.info(f'Localized {len(poses)} / {len(query_list)} images. {failed} failed.')
+    logging.info(f'Writing poses to {results}...')
+    with open(results, 'w') as f:
+        for q in poses:
+            qvec, tvec = poses[q]
+            qvec = ' '.join(map(str, qvec))
+            tvec = ' '.join(map(str, tvec))
+            name = q.split('/')[-1]
+            f.write(f'{name} {qvec} {tvec}\n')

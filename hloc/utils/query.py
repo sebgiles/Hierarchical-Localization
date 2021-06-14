@@ -1,3 +1,4 @@
+from threading import setprofile
 import numpy as np
 from .parsers import parse_retrieval
 from pathlib import Path
@@ -52,6 +53,7 @@ class QueryImage:
         self.camera_id = int(filename[11])
         self.date = datetime.datetime.fromtimestamp(self.time_us/1e6)
         self.mkpq = None
+        self.string_with_intrinsics = None
 
     def __repr__(self):
         return self.filename
@@ -109,19 +111,40 @@ class QueryFrameSequence:
 class QueryDatabase:
     def __init__(self, images_path: Path):
         image_names = None
+        strings_with_instrinsics = None
         if images_path.is_file():
-            # Take images with valid retrieval
-            image_names = list(parse_retrieval(images_path).keys())
+            
+            with open(images_path, 'r') as f:
+                strings_with_instrinsics = f.readlines()
+            image_names = [s.split()[0] for s in strings_with_instrinsics]
         else:
             image_names = os.listdir(images_path)
         self.images = [QueryImage(x) for x in image_names]
+        if strings_with_instrinsics:
+            for image, swi in zip(self.images, strings_with_instrinsics):
+                image.string_with_intrinsics = swi.strip()
         self.frames = self.__to_frames(self.images)
         self.sequences = self.__to_sequences(self.frames)
 
 
+    def get_sequence_queries(self, step_size: int, max_size:int = None):
+        out = []
+        for seq in self.sequences:
+            for cam in seq.cams:
+                if len(seq.frames) < step_size: 
+                    continue
+                for i, f0 in enumerate(seq.frames[:-step_size]):
+                    f1 = seq.frames[i+step_size]
+                    qfs = QueryFrameSequence([f0, f1])
+                    out.append(qfs)
+        if max_size is not None:
+            out = out[:max_size]
+        return SequenceQuerySet(out)
+
+
     # n is how many queries you want to generate
     # step_size is number of time steps (~100ms) between frames
-    def get_sequence_queries(self, query_count=1, step_size=1, step_count=2, 
+    def get_random_sequence_queries(self, query_count=1, step_size=1, step_count=2, 
         required_cams=[], seed=None):
         random.seed(seed)
         step_span = step_count*step_size
@@ -206,16 +229,17 @@ class SequenceQuerySet:
     def __init__(self, sequence_queries: List[QueryFrameSequence]):
         self.sequences = sequence_queries
 
-    def write_pairs_for_matching(self, output_file: Path, overwrite=False, cam_id=0):
+    def write_pairs_for_matching(self, output_file: Path, overwrite=False, cam_ids:int=None):
         assert overwrite or not output_file.exists()
         lines = []
         for seq in self.sequences:
             for f0, f1 in zip(seq.frames[:-1], seq.frames[1:]):
-                # NOTE: we only take one image from the rigs
-                lines.append(
-                    f"{f0.images[cam_id].filename} {f1.images[cam_id].filename}\n")
-                lines.append(
-                    f"{f1.images[cam_id].filename} {f0.images[cam_id].filename}\n")
+                cams = cam_ids or seq.cams
+                for cam_id in cams:
+                    lines.append(
+                        f"{f0.images[cam_id].filename} {f1.images[cam_id].filename}\n")
+                    lines.append(
+                        f"{f1.images[cam_id].filename} {f0.images[cam_id].filename}\n")
 
         with open(output_file, 'w') as f:
             f.writelines(lines)
